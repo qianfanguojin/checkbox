@@ -5,7 +5,8 @@ new Env('签到盒');
 const yaml = require("js-yaml");
 const fs = require('fs');
 const yargs = require('yargs');
-const axios= require('axios');
+const axios = require('axios');
+const path = require('path')
 var argv = yargs.argv;
 ycurl = process.env.ycurl
 let QL = process.env.QL_DIR
@@ -14,10 +15,21 @@ if (fs.existsSync("./sendNotify.js")) notify = require('./sendNotify')
 
 //自行添加任务 名字看脚本里的文件名 比如csdn.js 就填"csdn"
 var cbList = []
-async function go() {
-    if (ycurl) await getCF(ycurl)
-    else {
-        if (fs.existsSync("./config.yml")) config = yaml.load(fs.readFileSync('./config.yml', 'utf8'));
+var signlist = []
+async function check_config(){
+    return new Promise(async (resolve) => {
+        paths = [
+            "./config.yml",
+        ]
+        for (let onepath of paths) {
+            config_path = path.join(__dirname, onepath)
+            if (fs.existsSync(config_path)) {
+                console.log("使用配置文件路径:", config_path)
+                config = yaml.load(fs.readFileSync(config_path, 'utf8'));
+                break
+            }
+        }
+
         if (QL) {
             console.log("当前是青龙面板,路径：" + QL)
             if (fs.existsSync(`/${QL}/data/config/config.sh`)) console.log("建议更新到最新版青龙再来运行哦,或者手动修改路径叭~")
@@ -30,14 +42,25 @@ async function go() {
                 else console.log("亲,您的依赖掉啦,但是没有完全掉 请重装依赖\npnpm install  axios crypto crypto-js fs iconv-lite js-yaml yargs\n或者\nnpm install  axios crypto crypto-js fs iconv-lite js-yaml yargs")
             }
         }
+        resolve();
+    })
 
+}
+
+async function go() {
+    if (ycurl) await getCF(ycurl)
+    else {
+        await check_config()
     }
     if (config && config.Push) sendmsg = require("./sendmsg")
     if (config) signlist = config.cbList.split("&")
     if (config && config.needPush && config.needPush == 0) needPush = false
-    var signList = (argv._.length) > 0 ? argv._ : (cbList.length > 0 ? cbList : signlist)
-    if (config && process.env.TENCENTCLOUD_RUNENV != "SCF") start(signList);
-    else console.log("哈哈哈")
+    if (config && process.env.TENCENTCLOUD_RUNENV != "SCF" && process.env.RUNTIME_PROJECT_ID == "") {
+        let signList = (argv._.length) > 0 ? argv._ : (cbList.length > 0 ? cbList : signlist)
+        start(signList);
+    }else {
+        console.log("自定义运行！")
+    }
 }
 
 function start(taskList) {
@@ -74,7 +97,7 @@ function getCF(ycurl) {
             console.log("------------开始获取远程配置文件------------");
             let rr = await axios.get(ycurl)
             if (rr && rr.data)  rconfig = rr.data
-            
+
             if (rconfig.match(/cbList/)) {
                 console.log("------------获取远程配置文件成功------------")
                 config = yaml.load(rconfig)
@@ -91,9 +114,17 @@ function getCF(ycurl) {
     });
 }
 
-go()
+//非模块化运行
+//go
+
 //云函数入口
 exports.main_handler = async () => {
     await start()
-    await start(signList);
+    await start(signlist);
+};
+
+//华为云函数入口
+exports.handler = async (event, context) => {
+    await go()
+    await start(signlist);
 };
